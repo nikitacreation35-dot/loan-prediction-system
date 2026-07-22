@@ -1,108 +1,173 @@
-#app.py
-import gradio as gr
+# app.py
+
+import os
 import joblib
-import pandas as pd
+import gradio as gr
 
-# Load the trained Random Forest model
-model = joblib.load("loan_prediction_model.pkl")
+# ==========================================================
+# Load the trained model
+# ==========================================================
+try:
+    deployed_rf = joblib.load("loan_prediction_model.pkl")
+except Exception as e:
+    print(f"Warning: Model not found or error loading. {e}")
+    deployed_rf = None
 
-# Prediction function
-def predict_loan(
-    gender,
-    married,
-    dependents,
+# ==========================================================
+# Prediction Function with Error Handling
+# ==========================================================
+def predict_loan_status(
+    no_of_dependents,
     education,
     self_employed,
-    applicant_income,
-    coapplicant_income,
+    income_annum,
     loan_amount,
-    loan_amount_term,
-    credit_history,
-    property_area
+    loan_term,
+    cibil_score,
+    residential_assets_value,
+    commercial_assets_value,
+    luxury_assets_value,
+    bank_asset_value,
 ):
-    # Convert categorical values into numbers
-    gender = 1 if gender == "Male" else 0
-    married = 1 if married == "Yes" else 0
+    # --- CODE BLOCK: INPUT CAPTURE & VALIDATION ---
+    values = [
+        no_of_dependents, education, self_employed, income_annum, 
+        loan_amount, loan_term, cibil_score, residential_assets_value, 
+        commercial_assets_value, luxury_assets_value, bank_asset_value
+    ]
 
-    dep_map = {"0": 0, "1": 1, "2": 2, "3+": 3}
-    dependents = dep_map[dependents]
+    # 1. Empty input check
+    if any(v is None or str(v).strip() == "" for v in values):
+        return "❌ Please fill in all the input fields."
 
-    education = 0 if education == "Graduate" else 1
-    self_employed = 1 if self_employed == "Yes" else 0
-    credit_history = 1 if credit_history == "Yes" else 0
+    # 2. Type casting
+    try:
+        no_of_dependents = int(no_of_dependents)
+        education = int(education) # From Dropdown
+        self_employed = int(self_employed) # From Dropdown
+        income_annum = float(income_annum)
+        loan_amount = float(loan_amount)
+        loan_term = int(loan_term)
+        cibil_score = int(cibil_score)
+        residential_assets_value = float(residential_assets_value)
+        commercial_assets_value = float(commercial_assets_value)
+        luxury_assets_value = float(luxury_assets_value)
+        bank_asset_value = float(bank_asset_value)
+    except (ValueError, TypeError):
+        return "❌ Please enter valid numeric values."
 
-    area_map = {
-        "Rural": 0,
-        "Semiurban": 1,
-        "Urban": 2
-    }
-    property_area = area_map[property_area]
+    # 3. Negative value check
+    if any(v < 0 for v in values):
+        return "❌ Negative values are not allowed for financial metrics."
 
-    # Create dataframe
-    data = pd.DataFrame([[
-        gender,
-        married,
-        dependents,
-        education,
-        self_employed,
-        applicant_income,
-        coapplicant_income,
-        loan_amount,
-        loan_amount_term,
-        credit_history,
-        property_area
-    ]], columns=[
-        "Gender",
-        "Married",
-        "Dependents",
-        "Education",
-        "Self_Employed",
-        "ApplicantIncome",
-        "CoapplicantIncome",
-        "LoanAmount",
-        "Loan_Amount_Term",
-        "Credit_History",
-        "Property_Area"
-    ])
+    # 4. Specific Range Validations
+    if not (300 <= cibil_score <= 900):
+        return "❌ CIBIL score must be between 300 and 900."
+    
+    if no_of_dependents > 20:
+        return "❌ Number of dependents seems unusually high (Max 20)."
+    # ----------------------------------------------
 
-    prediction = model.predict(data)[0]
+    # --- CODE BLOCK: MODEL EXECUTION ---
+    if deployed_rf is None:
+        return "❌ Model failed to load. Please check your .pkl file."
 
-    if prediction == 1:
-        return "✅ Loan Approved"
-    else:
-        return "❌ Loan Not Approved"
+    try:
+        # Array strictly ordered to match the X dataframe provided
+        input_data = [[
+            no_of_dependents,
+            education,
+            self_employed,
+            income_annum,
+            loan_amount,
+            loan_term,
+            cibil_score,
+            residential_assets_value,
+            commercial_assets_value,
+            luxury_assets_value,
+            bank_asset_value
+        ]]
 
+        prediction = deployed_rf.predict(input_data)
 
-# Gradio Interface
-demo = gr.Interface(
-    fn=predict_loan,
-    inputs=[
-        gr.Radio(["Male", "Female"], label="Gender"),
-        gr.Radio(["Yes", "No"], label="Married"),
-        gr.Dropdown(["0", "1", "2", "3+"], label="Dependents"),
-        gr.Radio(["Graduate", "Not Graduate"], label="Education"),
-        gr.Radio(["Yes", "No"], label="Self Employed"),
-        gr.Number(label="Applicant Income"),
-        gr.Number(label="Coapplicant Income"),
-        gr.Number(label="Loan Amount"),
-        gr.Number(label="Loan Amount Term"),
-        gr.Radio(["Yes", "No"], label="Credit History"),
-        gr.Dropdown(["Rural", "Semiurban", "Urban"], label="Property Area"),
-    ],
-    outputs=gr.Textbox(label="Prediction"),
-    title="Loan Prediction System",
-    description="""
-Random Forest Machine Learning Model
+        # Assuming 1 = Approved, 0 = Rejected based on standard loan datasets
+        if prediction[0] == 1:
+            return (
+                "🟢 Prediction Result\n\n"
+                "Loan Status: APPROVED\n\n"
+                "The applicant meets the criteria for this loan."
+            )
+        else:
+            return (
+                "🔴 Prediction Result\n\n"
+                "Loan Status: REJECTED\n\n"
+                "The applicant does not meet the criteria."
+            )
 
-**Name:** Nikita Ahlawat  
-**Class:** MCA
+    except Exception as e:
+        return f"❌ Prediction failed.\n\nError: {str(e)}"
+    # -----------------------------------
+
+# ==========================================================
+# Description & Footer
+# ==========================================================
+# --- CODE BLOCK: UI TEXT CONFIGURATION ---
+DESCRIPTION = """
+# 🏦 Loan Approval Prediction System
+
+This application predicts whether an applicant's loan will be **Approved** or **Rejected** using a trained **Random Forest Machine Learning Model**.
+
+Enter the applicant's financial and personal details below to run the assessment.
 """
-)
-import os
 
-port = int(os.environ.get("PORT", 7860))
+developer_info = """
+### About the Developer
+**Created by:** Chandan Saroj
 
-demo.launch(
-    server_name="0.0.0.0",
-    server_port=port
+* **LinkedIn:** [Connect with me](YOUR_LINKEDIN_URL_HERE)
+* **GitHub:** [Check out my projects](YOUR_GITHUB_URL_HERE)
+* **Instagram:** [Follow me](YOUR_INSTAGRAM_URL_HERE)
+
+---
+### 🛠️ Tools & Technologies Used
+* **Machine Learning:** Scikit-learn (Random Forest Classifier)
+* **Web Framework:** Gradio
+* **Language:** Python
+* **Deployment:** Render
+"""
+# -----------------------------------------
+
+# ==========================================================
+# Interface Setup
+# ==========================================================
+# --- CODE BLOCK: GRADIO COMPONENTS MAPPED TO FEATURES ---
+interface = gr.Interface(
+    fn=predict_loan_status,
+    inputs=[
+        gr.Number(label="Number of Dependents"),
+        gr.Dropdown(choices=[("Graduate", 1), ("Not Graduate", 0)], label="Education Status"),
+        gr.Dropdown(choices=[("Yes", 1), ("No", 0)], label="Self Employed?"),
+        gr.Number(label="Annual Income (₹/$)"),
+        gr.Number(label="Loan Amount Requested"),
+        gr.Number(label="Loan Term (Months/Years)"),
+        gr.Number(label="CIBIL Score (300 - 900)"),
+        gr.Number(label="Residential Assets Value"),
+        gr.Number(label="Commercial Assets Value"),
+        gr.Number(label="Luxury Assets Value"),
+        gr.Number(label="Bank Asset Value"),
+    ],
+    outputs=gr.Textbox(label="Assessment Result", lines=6),
+    title="🏦 Loan Approval Prediction System",
+    description=DESCRIPTION,
+    article=developer_info
 )
+# --------------------------------------------------------
+
+# ==========================================================
+# Launch
+# ==========================================================
+if __name__ == "__main__":
+    interface.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.environ.get("PORT", 7860)),
+    )
